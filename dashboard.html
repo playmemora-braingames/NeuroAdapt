@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#123f57"><title>NeuroAdapt Research Dashboard</title>
+<style>*{box-sizing:border-box}body{margin:0;background:#edf5f7;color:#173044;font:16px system-ui,-apple-system,Segoe UI,sans-serif}main{max-width:980px;margin:auto;padding:20px 16px 70px}header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}h1{font-size:26px;margin:10px 0}h2{font-size:20px;margin:0 0 12px}p{line-height:1.5}.muted{color:#607584}.card{background:white;border-radius:17px;padding:20px;margin:16px 0;box-shadow:0 3px 15px #1730440b}button,input,select{font:inherit;padding:12px;border-radius:9px}button{background:#126b80;color:white;border:0;cursor:pointer}button:disabled{opacity:.5}input{width:100%;border:1px solid #b9cbd2;margin:8px 0}a{color:#126b80}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}.stat{background:#eaf3f5;padding:14px;border-radius:12px}.stat strong{display:block;font-size:25px}.stat small{color:#607584}svg{width:100%;height:auto;display:block}table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:9px 7px;text-align:left;border-bottom:1px solid #e4eef1}th{white-space:nowrap}.scroll{overflow:auto}.hidden{display:none}.pill{background:#e6f2f3;padding:5px 10px;border-radius:15px;font-size:12px}#chart{min-height:200px}.warn{background:#fff8e9;border-radius:10px;padding:12px}</style></head>
+<body><main><header><div><h1>🧠 NeuroAdapt Research</h1><div class="muted">Private dashboard · Exploratory mood forecasting</div></div><a href="sync.html">← Mood tracker & WHOOP sync</a></header>
+<section id="auth" class="card"><h2>Sign in</h2><p class="muted">Use the same NeuroAdapt account as your mood tracker.</p><input id="email" type="email" placeholder="Email" autocomplete="email"><input id="password" type="password" placeholder="Password" autocomplete="current-password"><button id="signin">Sign in</button></section>
+<div id="app" class="hidden">
+<div class="card"><div style="display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap"><div><strong>Research overview</strong><div class="muted" id="updated">Loading…</div></div><div><button id="reload">Refresh data</button> <button id="signout" style="background:#e5eef1;color:#173044">Sign out</button></div></div><div class="grid" style="margin-top:16px"><div class="stat"><small>Mood entries</small><strong id="moods">—</strong></div><div class="stat"><small>WHOOP days</small><strong id="days">—</strong></div><div class="stat"><small>Matched days</small><strong id="matched">—</strong></div><div class="stat"><small>Average mood</small><strong id="avg">—</strong></div></div></div>
+<section class="card"><h2>Trends over time</h2><p class="muted">Choose a measurement. Each line shows values for available dates; missing days are not filled in.</p><label for="metric">Measurement</label> <select id="metric"><option value="mood">Mood (1–5)</option><option value="sleep_hours">Sleep (hours)</option><option value="hrv_ms">HRV (ms)</option><option value="resting_heart_rate">Resting heart rate (bpm)</option><option value="recovery_score">Recovery (%)</option><option value="strain">Strain</option></select><div id="chart" aria-label="Trend chart"></div></section>
+<section class="card"><h2>Experimental mood prediction</h2><p class="muted">A simple on-device machine-learning experiment uses previous-day WHOOP readings to estimate your mood on the following day. It does not diagnose, assess, or predict depression or any mental health condition.</p><div id="prediction" class="warn">Waiting for data.</div><p class="muted" style="font-size:13px">Requires at least 20 days with both a mood rating and WHOOP measurements from the preceding day. We test predictions on later days that were not used to train them and compare them with a simple average-mood baseline. The model only becomes available if it beats that baseline. Predictions are uncertain and should not be treated as facts about how you feel.</p></section>
+<section class="card"><h2>Daily research records</h2><p class="muted">These are the records available to your signed-in account. Mood is the average of ratings submitted that day (Pacific Time).</p><div class="scroll"><table><thead><tr><th>Date</th><th>Mood</th><th>Sleep h</th><th>HRV ms</th><th>RHR bpm</th><th>Recovery %</th><th>Strain</th></tr></thead><tbody id="records"><tr><td colspan="7">Loading…</td></tr></tbody></table></div></section>
+<p class="muted" style="font-size:13px">Research prototype. Your measurements remain in Supabase; prediction calculations run locally in your browser. Do not use predictions for health decisions.</p>
+</div><p id="status" role="status" class="muted"></p></main>
+<script type="module">
+import {createClient} from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/+esm';
+const sb=createClient('https://brprgwklgkufckahojbd.supabase.co','sb_publishable_Hovfv4W_1Lz6FRenIrVOOg_dJWAvJAa');
+const $=id=>document.getElementById(id),keys=['sleep_hours','hrv_ms','resting_heart_rate','recovery_score','strain'];let records=[],moodDates=new Map();
+const dateLocal=s=>new Intl.DateTimeFormat('en-CA',{timeZone:'America/Vancouver',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(s));
+const addDays=(s,n)=>{const d=new Date(s+'T12:00:00Z');d.setUTCDate(d.getUTCDate()+n);return d.toISOString().slice(0,10)};
+const finite=v=>v!==null&&v!==undefined&&Number.isFinite(Number(v));
+const num=v=>finite(v)?Number(v):null;
+function showStatus(s){$('status').textContent=s}
+async function load(){
+ showStatus('Loading private research data…');
+ const [m,w]=await Promise.all([sb.from('mood_entries').select('mood,recorded_at').order('recorded_at',{ascending:true}).limit(5000),sb.from('whoop_daily_metrics').select('metric_date,sleep_hours,hrv_ms,resting_heart_rate,recovery_score,strain').order('metric_date',{ascending:true}).limit(5000)]);
+ if(m.error||w.error){showStatus('Could not load data: '+(m.error?.message||w.error?.message));return}
+ const moods=m.data||[],whoop=w.data||[];
+ moodDates=new Map();
+ for(const e of moods){const d=dateLocal(e.recorded_at);if(!moodDates.has(d))moodDates.set(d,[]);moodDates.get(d).push(Number(e.mood))}
+ const dates=new Set([...moodDates.keys(),...whoop.map(r=>r.metric_date)]),byWhoop=new Map(whoop.map(r=>[r.metric_date,r]));
+ records=[...dates].sort().map(date=>{const values=moodDates.get(date),row=byWhoop.get(date)||{};return {date,mood:values?values.reduce((a,b)=>a+b,0)/values.length:null,...Object.fromEntries(keys.map(k=>[k,num(row[k])]))}});
+ $('moods').textContent=moods.length;$('days').textContent=whoop.length;$('matched').textContent=records.filter(r=>r.mood!==null&&keys.some(k=>r[k]!==null)).length;
+ $('avg').textContent=moods.length?(moods.reduce((a,b)=>a+Number(b.mood),0)/moods.length).toFixed(2)+'/5':'—';
+ $('updated').textContent='Last refreshed '+new Date().toLocaleString();
+ renderChart();renderRows();predict();showStatus('');
+}
+function renderRows(){
+ const tbody=$('records');tbody.replaceChildren();
+ if(!records.length){const tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=7;td.textContent='No data yet. Add a mood rating and allow WHOOP to collect its first complete night.';tr.append(td);tbody.append(tr);return}
+ for(const r of [...records].reverse().slice(0,100)){const tr=document.createElement('tr');for(const k of ['date','mood',...keys]){const td=document.createElement('td');td.textContent=k==='date'?r.date:r[k]===null?'—':k==='mood'||k==='sleep_hours'?r[k].toFixed(1):Number(r[k]).toFixed(k==='hrv_ms'?1:0);tr.append(td)}tbody.append(tr)}
+}
+function renderChart(){
+ const metric=$('metric').value,container=$('chart');container.replaceChildren();
+ const points=records.filter(r=>r[metric]!==null).slice(-90);
+ if(!points.length){container.textContent='No '+$('metric').selectedOptions[0].text+' measurements yet.';return}
+ const width=760,height=250,pad={left:56,right:16,top:18,bottom:40},v=points.map(r=>r[metric]),min=metric==='mood'?1:Math.min(...v),max=metric==='mood'?5:Math.max(...v),span=Math.max(max-min,1),x=i=>pad.left+(points.length===1?0.5:i/(points.length-1))*(width-pad.left-pad.right),y=n=>height-pad.bottom-(n-min)/span*(height-pad.top-pad.bottom);
+ const ns='http://www.w3.org/2000/svg',svg=document.createElementNS(ns,'svg');svg.setAttribute('viewBox','0 0 '+width+' '+height);svg.setAttribute('role','img');svg.setAttribute('aria-label','Trend of '+$('metric').selectedOptions[0].text+' from '+points[0].date+' to '+points.at(-1).date);
+ function el(name,attrs,txt){const e=document.createElementNS(ns,name);for(const [k,v] of Object.entries(attrs))e.setAttribute(k,String(v));if(txt!==undefined)e.textContent=txt;svg.append(e);return e}
+ for(let i=0;i<5;i++){const val=min+(max-min)*i/4,yy=y(val);el('line',{x1:pad.left,x2:width-pad.right,y1:yy,y2:yy,stroke:'#dce9ec'});el('text',{x:pad.left-9,y:yy+4,'text-anchor':'end','font-size':12,fill:'#607584'},val.toFixed(metric==='mood'?1:0))}
+ if(points.length>1)el('polyline',{points:points.map((r,i)=>x(i)+','+y(r[metric])).join(' '),fill:'none',stroke:'#087e95','stroke-width':3,'stroke-linecap':'round','stroke-linejoin':'round'});
+ for(let i=0;i<points.length;i++){const c=el('circle',{cx:x(i),cy:y(points[i][metric]),r:points.length>40?2:4,fill:'#087e95'});const t=document.createElementNS(ns,'title');t.textContent=points[i].date+': '+points[i][metric].toFixed(2);c.append(t)}
+ el('text',{x:pad.left,y:height-10,'font-size':12,fill:'#607584'},points[0].date);el('text',{x:width-pad.right,y:height-10,'text-anchor':'end','font-size':12,fill:'#607584'},points.at(-1).date);
+ container.append(svg);
+}
+function predict(){
+ const output=$('prediction'),byDate=new Map(records.map(r=>[r.date,r]));
+ // Features are measurements from the preceding day; target is next-day mood.
+ const samples=[];
+ for(const r of records){if(r.mood===null)continue;const prev=byDate.get(addDays(r.date,-1));if(!prev||keys.some(k=>prev[k]===null))continue;samples.push({date:r.date,y:r.mood,x:keys.map(k=>prev[k])})}
+ if(samples.length<20){output.textContent='Collecting training examples: '+samples.length+'/20 complete previous-day WHOOP + next-day mood pairs. Prediction is not available yet.';return}
+ samples.sort((a,b)=>a.date.localeCompare(b.date));
+ const split=Math.max(12,Math.floor(samples.length*0.8)),train=samples.slice(0,split),test=samples.slice(split);
+ if(test.length<4){output.textContent='Not enough separate test days to validate a prediction yet.';return}
+ const means=keys.map((_,j)=>train.reduce((s,r)=>s+r.x[j],0)/train.length),std=keys.map((_,j)=>Math.sqrt(train.reduce((s,r)=>s+(r.x[j]-means[j])**2,0)/train.length)||1);
+ const model=(x,training)=>{const nearest=training.map(r=>({d:Math.sqrt(r.x.reduce((s,v,j)=>s+((v-x[j])/std[j])**2,0)),y:r.y})).sort((a,b)=>a.d-b.d).slice(0,Math.min(5,training.length));const total=nearest.reduce((s,r)=>s+1/(r.d+0.3),0);return Math.max(1,Math.min(5,nearest.reduce((s,r)=>s+r.y/(r.d+0.3),0)/total))};
+ const baseline=train.reduce((s,r)=>s+r.y,0)/train.length,mae=test.reduce((s,r)=>s+Math.abs(model(r.x,train)-r.y),0)/test.length,baseMae=test.reduce((s,r)=>s+Math.abs(baseline-r.y),0)/test.length;
+ const latest=records.at(-1),today=new Date().toLocaleDateString('en-CA',{timeZone:'America/Vancouver'}),todayRow=byDate.get(today),predictRow=todayRow&&keys.every(k=>todayRow[k]!==null)?todayRow:null;
+ if(mae>=baseMae){output.textContent='Model not ready for reliable use. On '+test.length+' held-out days, the experimental model averaged '+mae.toFixed(2)+' mood points of error versus '+baseMae.toFixed(2)+' for a simple baseline. We will keep collecting data rather than show a misleading forecast.';return}
+ if(!predictRow){output.textContent='Model passed an initial test ('+mae.toFixed(2)+' average mood points of error on '+test.length+' held-out days), but today’s full WHOOP measurements are not available. No next-day forecast can be calculated yet.';return}
+ const estimate=model(keys.map(k=>predictRow[k]),samples);
+ output.textContent='Experimental estimate for '+addDays(today,1)+': '+estimate.toFixed(1)+'/5. On '+test.length+' held-out days, mean absolute error was '+mae.toFixed(2)+' mood points (simple baseline: '+baseMae.toFixed(2)+'). This is an uncertain research estimate, not a statement of how you will feel.';
+}
+$('metric').onchange=renderChart;$('reload').onclick=load;
+$('signin').onclick=async()=>{showStatus('Signing in…');const {error}=await sb.auth.signInWithPassword({email:$('email').value.trim(),password:$('password').value});if(error)showStatus(error.message);else await render()};
+$('signout').onclick=async()=>{await sb.auth.signOut();await render()};
+async function render(){const {data:{user}}=await sb.auth.getUser();$('auth').classList.toggle('hidden',!!user);$('app').classList.toggle('hidden',!user);if(user)await load()}
+render();
+</script></body></html>
